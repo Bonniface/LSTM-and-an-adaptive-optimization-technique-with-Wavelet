@@ -1,0 +1,184 @@
+---
+title: "Hybrid LiquidNNET"
+author: "Boniface"
+format: html
+editor: visual
+---
+
+The LiquidNet model is a type of neural network architecture designed specifically for high-frequency trading. It is based on the concept of a "liquid state machine", which is a type of recurrent neural network that can process continuous streams of input data in real-time.
+
+The LiquidNet model is designed to be highly parallelizable, which allows it to process large volumes of data quickly and efficiently. It uses a novel approach to training, called "liquid time-constant", which enables the network to adapt to changing market conditions and learn patterns in real-time.
+
+The LiquidNet model has been shown to outperform traditional time-series forecasting models on a variety of financial forecasting tasks, including stock price prediction, volatility forecasting, and portfolio optimization.
+
+However, it's important to note that the LiquidNet model is a relatively new and complex model, and it may require significant computational resources and expertise to implement effectively. Additionally, it may not be suitable for all types of financial forecasting tasks, and alternative models (such as the hybrid model used in this study) may be more appropriate depending on the specific requirements of the task.
+
+To implement the hybrid model used in this study, you could use packages such as "keras" and "wavelets" in R to build and train the LSTM model with wavelet-transformed input data. You could also use a package such as "GA" to implement the adaptive genetic algorithm for hyperparameter optimization.
+
+Here's a general outline of the steps you could take to implement the hybrid model in R:
+
+1.  Load and preprocess the financial data for the stock index you want to forecast. This may involve cleaning the data, transforming it into a time series format, and applying the wavelet transform to extract relevant features.
+
+    ```{r,warning=FALSE}
+    library(readxl)
+    SHARE_PRICES_1990_2008 <- read_excel("lstmmodel/SHARE PRICES 1990 - 2008.xlsx",col_names = TRUE)[,-1]
+    SHARE_PRICES_2009_2010 <- read_excel("lstmmodel/SHARE PRICES 2009 - 2010.xlsx",col_names = TRUE)[,-1]
+    SHARE_PRICES_2011_2021 <- read_excel("lstmmodel/SHARE PRICES 2011 - 2021 Nov.xlsx")
+    
+    ```
+```{r}
+# Rename the "...1" column to "Date"
+names(SHARE_PRICES_1990_2008)[names(SHARE_PRICES_1990_2008) == "...2"] <- "Date"
+names(SHARE_PRICES_2009_2010)[names(SHARE_PRICES_2009_2010) == "...2" ] <- "Date"
+names(SHARE_PRICES_2011_2021)[names(SHARE_PRICES_2011_2021) == "...1"] <- "Date"
+
+```
+```{r}
+library(tidyr)
+library(dplyr)
+# Find the common column names across all three data frames
+common_cols <- Reduce(intersect, list(names(SHARE_PRICES_1990_2008), names(SHARE_PRICES_2009_2010), names(SHARE_PRICES_2011_2021)))
+
+
+# Select only the common columns from each data frame and their date
+SHARE_PRICES_1990_2008_common <- SHARE_PRICES_1990_2008[, common_cols]
+SHARE_PRICES_2009_2010_common <- SHARE_PRICES_2009_2010[, common_cols]
+SHARE_PRICES_2011_2021_common <- SHARE_PRICES_2011_2021[, common_cols]
+
+# Concatenate the data frames
+merged_df <- bind_rows(SHARE_PRICES_1990_2008_common, SHARE_PRICES_2009_2010_common, SHARE_PRICES_2011_2021_common)
+
+
+SHARE_PRICES <- merged_df%>%
+                 fill(Date)
+```
+
+    ```{r}
+visdat::vis_dat(SHARE_PRICES)
+```{r}
+skimr::skim(SHARE_PRICES)
+```
+
+```{r}
+str(SHARE_PRICES)
+```
+If the percentage of missing values is high (e.g., more than 50%), imputation may introduce bias in the dataset. In such cases, it might be better to drop the columns or rows with missing values.
+```{r}
+# Calculate the percentage of missing values in each column
+missing_percentages <- colMeans(is.na(SHARE_PRICES)) * 100
+
+# Get the column names with missing percentages above or equal to 80%
+columns_to_drop <- names(missing_percentages[missing_percentages >= 45])
+columns_to_drop
+
+```
+```{r}
+SHARE_PRICES <- if(sum(is.na(SHARE_PRICES)) > 1) {
+    imputeTS::na_kalman(SHARE_PRICES, model = "auto.arima", smooth = TRUE)
+} else {
+    SHARE_PRICES
+}
+```
+```{r}
+# Divide each row of the data frame by 1000, except for rows 2911 to 3198
+SHARE_PRICES[2911:3198, -1] <- SHARE_PRICES[2911:3198, -1] / 10000
+
+```
+
+```{r}
+dim(SHARE_PRICES)
+```
+```{r}
+library(tidyverse)
+library(TSstudio)
+library(lubridate)
+library(data.table)
+# Convert the index to a date-time format
+SHARE_PRICES$Date <- as.POSIXlt(SHARE_PRICES$Date)
+
+# Create the time series object
+SHARE_PRICES <- ts(SHARE_PRICES[-1], start = c(1990, 11), end =c(2021, 11), frequency = 12)
+
+
+# Note that the 'frequency' argument is set to 12 because the data is monthly, 
+# and the 'start' and 'end' arguments are set based on the first and last dates in the data frame.
+plot(cbind(TRANSOL,SIC,GSR,GOIL ))
+ ts_plot(SHARE_PRICES)
+```
+```{r}
+library(vars)
+
+# Create a VAR model with lag = 1
+model <- VAR(SHARE_PRICES, p = 1)
+
+# Decompose the VAR model
+decomp <- irf(model, impulse = "SharePrice1", response = "SharePrice2", boot = FALSE)
+
+# Plot the results
+plot(decomp)
+
+```
+
+```{r}
+library(forecast)
+
+# Create a multivariate time series object
+SHARE_PRICES_msts <- msts(SHARE_PRICES, seasonal.periods = c(12, 4), start = c(1990, 1))
+
+# Decompose the time series
+SHARE_PRICES_decomp <- decompose(SHARE_PRICES_msts)
+
+# View the decomposed time series
+plot(SHARE_PRICES_decomp)
+
+```
+
+```{r}
+library(tseries)
+
+# Assuming SHARE_PRICES is a time series object
+adf_test <- adf.test(TRANSOL)
+
+# Print the test statistic and p-value
+cat("ADF test statistic:", adf_test$statistic, "\n")
+cat("p-value:", adf_test$p.value, "\n")
+
+# Print the test result
+if (adf_test$p.value < 0.05) {
+  cat("The time series is stationary.\n")
+} else {
+  cat("The time series is non-stationary.\n")
+}
+
+```
+
+```{r}
+# difference each variable separately
+df_diff <- df
+df_diff[, c("var1", "var2", "var3")] <- lapply(df_diff[, c("var1", "var2", "var3")], diff)
+```
+
+2.  Split the data into training and testing sets, and use the training set to train the LSTM model with the wavelet-transformed input data. We may need to experiment with different hyperparameters (such as the number of LSTM layers, the number of neurons in each layer, and the learning rate) to optimize the model's performance.
+```{r}
+
+```
+
+
+3.  Use the adaptive genetic algorithm to search for the optimal set of hyperparameters for the LSTM model. This may involve defining a fitness function that evaluates the model's performance on a validation set of data, and iteratively refining the model hyperparameters based on the fitness scores.
+
+4.  Use the trained and optimized LSTM model to make predictions on the testing set of data, and evaluate the model's performance using metrics such as mean absolute error (MAE), mean squared error (MSE), and root mean squared error (RMSE).
+
+5.  Repeat steps 1-4 for each stock index you want to forecast, and compare the performance of the hybrid model to other benchmark models (such as a simple moving average or autoregressive integrated moving average model) using the same evaluation metrics.
+
+Keep in mind that the specifics of implementing the hybrid model in R will depend on the specific data and requirements of your task. This is just a general outline to give you an idea of the steps involved.
+
+\
+
+```{r}
+1 + 1
+```
+
+```{r}
+#| echo: false
+2 * 2
+```
