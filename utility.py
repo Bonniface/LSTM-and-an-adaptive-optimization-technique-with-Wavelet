@@ -8,7 +8,12 @@ from scipy.stats import mode
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted, check_array
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-from .utils import continuousTimeForm,
+from .utils import continuousTimeForm
+
+
+from keras.models import Sequential
+from keras.layers import LSTM, Dense
+from sklearn.preprocessing import MinMaxScaler
 
 class missTS(BaseEstimator, TransformerMixin):
     """Missing value imputation using Random Forests with ImputeTS.
@@ -537,3 +542,50 @@ def continuousTimeForm(df, time_var_name,freq):
 def na_kalman(ts):
     imputeTS = importr('imputeTS')
     return imputeTS.na_kalman(ro.FloatVector(ts))
+
+
+# Scale the data to be between 0 and 1
+scaler = MinMaxScaler()
+scaled_data = scaler.fit_transform(SHARE_PRICES['HFC'].values.reshape(-1,1))
+
+# Define the LSTM model
+n_steps = 4  # Number of time steps to use in LSTM model
+n_features = 1  # Number of features (i.e. time series) to use in LSTM model
+model = Sequential()
+model.add(LSTM(50, input_shape=(n_steps, n_features)))
+model.add(Dense(1))
+model.compile(optimizer='adam', loss='mse')
+
+# Fit the LSTM model to each sub-series obtained from wavelet decomposition
+for i, sub_series in enumerate(cA):
+    sub_series = np.array(sub_series)
+    n_samples = len(sub_series) - n_steps + 1  # Number of samples to use for training
+    X = np.zeros((n_samples, n_steps, n_features))
+    y = np.zeros(n_samples)
+    for j in range(n_samples):
+        X[j,:,:] = sub_series[j:j+n_steps].reshape((n_steps, n_features))
+        y[j] = sub_series[j+n_steps]
+    model.fit(X, y, epochs=10, batch_size=32, verbose=0)
+# Make predictions using the LSTM model
+predictions = []
+for i, sub_series in enumerate(cA):
+    sub_series = np.array(sub_series)
+    n_samples = len(sub_series) - n_steps + 1  # Number of samples to use for prediction
+    X = np.zeros((n_samples, n_steps, n_features))
+    for j in range(n_samples):
+        X[j,:,:] = sub_series[j:j+n_steps].reshape((n_steps, n_features))
+    yhat = model.predict(X)
+    predictions.append(yhat.reshape(-1))
+
+# Plot the original time series and predicted values
+fig, ax = plt.subplots(figsize=(12, 6))
+ax.plot(SHARE_PRICES['HFC'].index, SHARE_PRICES['HFC'], label='Original')
+for i, pred in enumerate(predictions):
+    ax.plot(SHARE_PRICES['HFC'].index[n_steps-1+i:len(pred)+n_steps-1+i], 
+            scaler.inverse_transform(pred.reshape(-1,1)), 
+            label='Scale {}'.format(i+1))
+ax.legend()
+ax.set_xlabel('Date')
+ax.set_ylabel('Price')
+ax.set_title('Wavelet-LSTM Predictions')
+plt.show()

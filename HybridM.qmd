@@ -17,155 +17,209 @@ To implement the hybrid model used in this study, you could use packages such as
 
 Here's a general outline of the steps you could take to implement the hybrid model in R:
 
-1.  Load and preprocess the financial data for the stock index you want to forecast. This may involve cleaning the data, transforming it into a time series format, and applying the wavelet transform to extract relevant features.
+## 1.  Load and preprocess
+the financial data for the stock index you want to forecast. This may involve cleaning the data, transforming it into a time series format, and applying the wavelet transform to extract relevant features.
 
-    ```{r,warning=FALSE}
-    library(readxl)
-    SHARE_PRICES_1990_2008 <- read_excel("lstmmodel/SHARE PRICES 1990 - 2008.xlsx",col_names = TRUE)[,-1]
-    SHARE_PRICES_2009_2010 <- read_excel("lstmmodel/SHARE PRICES 2009 - 2010.xlsx",col_names = TRUE)[,-1]
-    SHARE_PRICES_2011_2021 <- read_excel("lstmmodel/SHARE PRICES 2011 - 2021 Nov.xlsx")
-
-    ```
-
-    ```{r}
-    # Rename the "...1" column to "Date"
-    names(SHARE_PRICES_1990_2008)[names(SHARE_PRICES_1990_2008) == "...2"] <- "Date"
-    names(SHARE_PRICES_2009_2010)[names(SHARE_PRICES_2009_2010) == "...2" ] <- "Date"
-    names(SHARE_PRICES_2011_2021)[names(SHARE_PRICES_2011_2021) == "...1"] <- "Date"
-
-    ```
-
-    ```{r}
-    library(tidyr)
-    library(dplyr)
-    # Find the common column names across all three data frames
-    common_cols <- Reduce(intersect, list(names(SHARE_PRICES_1990_2008), names(SHARE_PRICES_2009_2010), names(SHARE_PRICES_2011_2021)))
-
-
-    # Select only the common columns from each data frame and their date
-    SHARE_PRICES_1990_2008_common <- SHARE_PRICES_1990_2008[, common_cols]
-    SHARE_PRICES_2009_2010_common <- SHARE_PRICES_2009_2010[, common_cols]
-    SHARE_PRICES_2011_2021_common <- SHARE_PRICES_2011_2021[, common_cols]
-
-    # Concatenate the data frames
-    merged_df <- bind_rows(SHARE_PRICES_1990_2008_common, SHARE_PRICES_2009_2010_common, SHARE_PRICES_2011_2021_common)
-
-
-    SHARE_PRICES <- merged_df%>%
-                     fill(Date)
-    ```
-
-    ```{r}
-    visdat::vis_dat(SHARE_PRICES)
-    skimr::skim(SHARE_PRICES)
-    ```
-
-```{r}
-str(SHARE_PRICES)
-```
-
-If the percentage of missing values is high (e.g., more than 50%), imputation may introduce bias in the dataset. In such cases, it might be better to drop the columns or rows with missing values.
-
-```{r}
-# Calculate the percentage of missing values in each column
-missing_percentages <- colMeans(is.na(SHARE_PRICES)) * 100
-
-# Get the column names with missing percentages above or equal to 80%
-columns_to_drop <- names(missing_percentages[missing_percentages >= 45])
-columns_to_drop
-
-```
-
-```{r}
-SHARE_PRICES <- if(sum(is.na(SHARE_PRICES)) > 1) {
-    imputeTS::na_kalman(SHARE_PRICES, model = "auto.arima", smooth = TRUE)
-} else {
-    SHARE_PRICES
-}
-```
-
-```{r}
-# Divide each row of the data frame by 1000, except for rows 2911 to 3198
-SHARE_PRICES[2911:3198, -1] <- SHARE_PRICES[2911:3198, -1] / 10000
-
-```
-
-```{r}
-dim(SHARE_PRICES)
-```
-
-```{r}
+```{r,warning=FALSE}
+library(readxl)
+library(xts)
+library(dplyr)
 library(tidyverse)
-library(TSstudio)
-library(lubridate)
-library(data.table)
-# Convert the index to a date-time format
-SHARE_PRICES$Date <- as.POSIXlt(SHARE_PRICES$Date)
+    SharePrice <- read.csv("lstmmodel/SharePrice.csv")
+```
+```{r}
+SharePrice$Date <- as.Date(SharePrice$Date)
 
-# Create the time series object
-SHARE_PRICES <- ts(SHARE_PRICES[-1], start = c(1990, 11), end =c(2021, 11), frequency = 12)
+# Sort the data frame by the "Date" column in ascending order
+SharePrice <- SharePrice[order(SharePrice$Date), ]
+# filter out any non-finite values from the "Date" column
+valid_dates <- !is.na(SharePrice$Date) & is.finite(SharePrice$Date)
 
+# create a sequence of dates from the minimum to maximum date in df
+dates <- seq(min(SharePrice$Date[valid_dates]), max(SharePrice$Date[valid_dates]), by = "day")
 
-# Note that the 'frequency' argument is set to 12 because the data is monthly, 
-# and the 'start' and 'end' arguments are set based on the first and last dates in the data frame.
-plot(cbind(TRANSOL,SIC,GSR,GOIL ))
- ts_plot(SHARE_PRICES)
+# create a new data frame with all dates in the sequence
+df_all <- data.frame(Date = dates)
+
+# merge the new data frame with the original data frame
+SharePrice <- merge(df_all, SharePrice, by = "Date", all.x = TRUE)
 ```
 
+
+    ```{r}
+# Drop duplicate rows based on the "Date" column
+SharePrice <- SharePrice %>% 
+  filter(!is.na(Date)) %>%
+  distinct(Date, .keep_all = TRUE)
+    ```
+
+
 ```{r}
-library(vars)
-
-# Create a VAR model with lag = 1
-model <- VAR(SHARE_PRICES, p = 1)
-
-# Decompose the VAR model
-decomp <- irf(model, impulse = "SharePrice1", response = "SharePrice2", boot = FALSE)
-
-# Plot the results
-plot(decomp)
+library(imputeTS)
+SharePrice <- if(sum(is.na(SharePrice)) > 1) {
+    imputeTS::na_kalman(SharePrice, model = "auto.arima", smooth = TRUE)
+} else {
+    SharePrice
+}
 
 ```
+Missing value imputation using the Kalman filter method provided by the imputeTS package. It checks if there are any missing values in the SHARE_PRICES dataframe and, if there are, it applies the na_kalman function to impute those missing values. The model argument is set to "auto.arima", which means that the function will automatically select the best ARIMA model to use for imputation. The smooth argument is set to TRUE, which means that the imputed values will be smoothed using the Kalman filter. If there are no missing values in the dataframe, the function simply returns the original SHARE_PRICES dataframe without performing any imputation.
+```{r}
+# subset the data frame to include only rows between "2009-01-01" and "2020-12-06"
+SharePrice_sub <- subset(SharePrice, Date >= as.Date("2009-01-01") & Date <= as.Date("2020-12-06"))
+
+# select the numeric columns and divide each row by 1000
+SharePrice_sub[, 2:ncol(SharePrice_sub)] <- SharePrice_sub[, 2:ncol(SharePrice_sub)] * 10000
+
+# replace the modified subsetted data frame back to the original data frame
+SharePrice[SharePrice$Date >= as.Date("2009-01-01") & SharePrice$Date <= as.Date("2020-12-06"), 2:ncol(SharePrice)] <- SharePrice_sub[, 2:ncol(SharePrice_sub)]
+
+# display the last few rows of the modified data frame
+tail(SharePrice)
+```
+
 
 ```{r}
-library(forecast)
-
-# Create a multivariate time series object
-SHARE_PRICES_msts <- msts(SHARE_PRICES, seasonal.periods = c(12, 4), start = c(1990, 1))
-
-# Decompose the time series
-SHARE_PRICES_decomp <- decompose(SHARE_PRICES_msts)
-
-# View the decomposed time series
-plot(SHARE_PRICES_decomp)
-
+# Set the "Date" column as the index of the data frame
+SharePrice <- SharePrice %>% 
+  column_to_rownames("Date")
+head(SharePrice)
 ```
 
 ```{r}
 library(tseries)
 
-# Assuming SHARE_PRICES is a time series object
-adf_test <- adf.test(TRANSOL)
+# scale the numeric columns
+SharePrice <- as.data.frame(diff(scale(SharePrice)))
 
-# Print the test statistic and p-value
-cat("ADF test statistic:", adf_test$statistic, "\n")
-cat("p-value:", adf_test$p.value, "\n")
+# test for stationarity using the Augmented Dickey-Fuller (ADF) test
+# for (i in 1:ncol(SharePrice)) {
+#   print(colnames(SharePrice)[i])
+#   print(adf.test(SharePrice[, i]))
+# }
 
-# Print the test result
-if (adf_test$p.value < 0.05) {
-  cat("The time series is stationary.\n")
-} else {
-  cat("The time series is non-stationary.\n")
+    ```
+For some of the columns, the p-value is smaller than the printed p-value, which means that the time series is likely stationary. For example, the `SCB`, `GGBL`,` HFC`, and `CMLT `columns all have p-values smaller than the printed p-value of 0.05, indicating that these time series are likely stationary. However, other columns, such as `ALW`, `MLC`,`UNIL`, and `PBC`, have p-values greater than 0.05, indicating that these time series are likely non-stationary.
+
+## 2.  Split
+the data into training and testing sets, and use the training set to train the LSTM model with the wavelet-transformed input data. We may need to experiment with different hyperparameters (such as the number of LSTM layers, the number of neurons in each layer, and the learning rate) to optimize the model's performance.
+
+
+```{r}
+library(waveslim)
+library(nnet)
+
+library(wavelets)
+
+# split data into training and test sets c("SWL" , "GCB" , "SCB" , "GGBL" ,"HFC" , "CMLT", "FML")
+train <- SharePrice[1:10000, c("SWL" , "GCB" , "SCB" , "GGBL" ,"HFC" , "CMLT", "FML")]
+test <- SharePrice[10001:10982,c("SWL" , "GCB" , "SCB" , "GGBL" ,"HFC" , "CMLT", "FML") ]
+head(train)
+```
+```{r}
+tail(train)
+```
+
+there are several other time series decomposition methods that can be used for multivariate time series. One popular method is the Singular Spectrum Analysis (SSA) which can be used for both univariate and multivariate time series. Another method is the Multivariate Empirical Mode Decomposition (MEMD) which is an extension of the Empirical Mode Decomposition (EMD) method for multivariate time series. Other methods include Canonical Correlation Analysis (CCA) and Dynamic Factor Analysis (DFA). Each method has its own strengths and weaknesses, so it is important to choose the method that is most appropriate for your specific application.
+```{r}
+library(WaveletComp)
+# Select the column of the training data you want to decompose (assuming it's in column 1)
+ts_data <- ts(train, start = c(1990, 11), frequency = 12)
+# Perform wavelet decomposition using the db4 wavelet
+decomp <- dwt.2d(ts_data,"haar")
+
+# Access the approximation coefficients (A) and detail coefficients (D) at each level
+# names(decomp) <- c("w1", "w2", "w3", "w4", "v4")
+str(ts_data)
+```
+```{r}
+summary(ts_data)
+```
+
+```{r}
+# Extract the wavelet coefficients for each series at each level
+wavelet_coeffs <- list()
+for (i in seq_along(decomp@W)) {
+  wavelet_coeffs[[i]] <- data.frame(sapply(decomp@W[[i]], function(x) x[,1]))
 }
 
 ```
 
+
 ```{r}
-# difference each variable separately
-df_diff <- df
-df_diff[, c("var1", "var2", "var3")] <- lapply(df_diff[, c("var1", "var2", "var3")], diff)
+# LSTM model parameters
+n_steps <- 3
+n_features <- 1
+n_epochs <- 100
+
+# Train and validate LSTM models for each wavelet coefficient series
+models <- list()
 ```
 
-2.  Split the data into training and testing sets, and use the training set to train the LSTM model with the wavelet-transformed input data. We may need to experiment with different hyperparameters (such as the number of LSTM layers, the number of neurons in each layer, and the learning rate) to optimize the model's performance.
+
+```{r}
+for (i in 1:ncol(coefficients)) {
+  # Prepare input-output pairs
+  input <- matrix(coefficients[, i][1:(length(coefficients[, i])-n_steps)], ncol=n_steps)
+  output <- coefficients[, i][(n_steps+1):length(coefficients[, i])]
+  
+  # Reshape input to be 3D (samples, time steps, features)
+  input <- array(input, dim=c(dim(input)[1], n_steps, n_features))
+  
+    # Split data into training and validation sets
+  n_train <- round(0.8*length(output))
+  x_train <- input[1:n_train, , ]
+  y_train <- output[1:n_train]
+  x_val <- input[(n_train+1):length(output), , ]
+  y_val <- output[(n_train+1):length(output)]
+  
+  # Define and compile LSTM model
+  model <- keras_model_sequential() %>%
+    layer_lstm(units=50, input_shape=c(n_steps, n_features)) %>%
+    layer_dense(units=1)
+  model %>% compile(loss="mean_squared_error", optimizer="adam")
+  
+  # Train model
+  history <- model %>% fit(x_train, y_train, epochs=n_epochs, batch_size=32,
+                            validation_data=list(x_val, y_val), verbose=0)
+  
+  # Save model to list
+  models[[i]] <- model
+}
+```
+
+```{r}
+library(keras)
+
+# Set up the LSTM model
+model <- keras_model_sequential()
+model %>% 
+  layer_lstm(units = 32, input_shape = c(n_timesteps, n_features)) %>% 
+  layer_dense(units = 1)
+
+# Compile the model
+model %>% compile(
+  loss = "mse",
+  optimizer = optimizer_adam()
+)
+
+# Fit the model to the training data
+model %>% fit(
+  A, # Use the approximation coefficients as input
+  train[, 1], # Use the original stock price data as output
+  epochs = 50,
+  batch_size = 32
+)
+
+```
+
+
+
+
+
+
+
+
 
 ```{r}
 
@@ -179,13 +233,6 @@ df_diff[, c("var1", "var2", "var3")] <- lapply(df_diff[, c("var1", "var2", "var3
 
 Keep in mind that the specifics of implementing the hybrid model in R will depend on the specific data and requirements of your task. This is just a general outline to give you an idea of the steps involved.
 
-\
 
-```{r}
-1 + 1
-```
 
-```{r}
-#| echo: false
-2 * 2
-```
+
