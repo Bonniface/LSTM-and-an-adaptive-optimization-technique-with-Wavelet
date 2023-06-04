@@ -1,0 +1,238 @@
+---
+title: "Hybrid LiquidNNET"
+author: "Boniface"
+format: html
+editor: visual
+---
+
+The LiquidNet model is a type of neural network architecture designed specifically for high-frequency trading. It is based on the concept of a "liquid state machine", which is a type of recurrent neural network that can process continuous streams of input data in real-time.
+
+The LiquidNet model is designed to be highly parallelizable, which allows it to process large volumes of data quickly and efficiently. It uses a novel approach to training, called "liquid time-constant", which enables the network to adapt to changing market conditions and learn patterns in real-time.
+
+The LiquidNet model has been shown to outperform traditional time-series forecasting models on a variety of financial forecasting tasks, including stock price prediction, volatility forecasting, and portfolio optimization.
+
+However, it's important to note that the LiquidNet model is a relatively new and complex model, and it may require significant computational resources and expertise to implement effectively. Additionally, it may not be suitable for all types of financial forecasting tasks, and alternative models (such as the hybrid model used in this study) may be more appropriate depending on the specific requirements of the task.
+
+To implement the hybrid model used in this study, you could use packages such as "keras" and "wavelets" in R to build and train the LSTM model with wavelet-transformed input data. You could also use a package such as "GA" to implement the adaptive genetic algorithm for hyperparameter optimization.
+
+Here's a general outline of the steps you could take to implement the hybrid model in R:
+
+## 1.  Load and preprocess
+the financial data for the stock index you want to forecast. This may involve cleaning the data, transforming it into a time series format, and applying the wavelet transform to extract relevant features.
+
+```{r,warning=FALSE}
+library(readxl)
+library(xts)
+library(dplyr)
+library(tidyverse)
+    SharePrice <- read.csv("lstmmodel/SharePrice.csv")
+```
+```{r}
+SharePrice$Date <- as.Date(SharePrice$Date)
+
+# Sort the data frame by the "Date" column in ascending order
+SharePrice <- SharePrice[order(SharePrice$Date), ]
+# filter out any non-finite values from the "Date" column
+valid_dates <- !is.na(SharePrice$Date) & is.finite(SharePrice$Date)
+
+# create a sequence of dates from the minimum to maximum date in df
+dates <- seq(min(SharePrice$Date[valid_dates]), max(SharePrice$Date[valid_dates]), by = "day")
+
+# create a new data frame with all dates in the sequence
+df_all <- data.frame(Date = dates)
+
+# merge the new data frame with the original data frame
+SharePrice <- merge(df_all, SharePrice, by = "Date", all.x = TRUE)
+```
+
+
+    ```{r}
+# Drop duplicate rows based on the "Date" column
+SharePrice <- SharePrice %>% 
+  filter(!is.na(Date)) %>%
+  distinct(Date, .keep_all = TRUE)
+    ```
+
+
+```{r}
+library(imputeTS)
+SharePrice <- if(sum(is.na(SharePrice)) > 1) {
+    imputeTS::na_kalman(SharePrice, model = "auto.arima", smooth = TRUE)
+} else {
+    SharePrice
+}
+
+```
+Missing value imputation using the Kalman filter method provided by the imputeTS package. It checks if there are any missing values in the SHARE_PRICES dataframe and, if there are, it applies the na_kalman function to impute those missing values. The model argument is set to "auto.arima", which means that the function will automatically select the best ARIMA model to use for imputation. The smooth argument is set to TRUE, which means that the imputed values will be smoothed using the Kalman filter. If there are no missing values in the dataframe, the function simply returns the original SHARE_PRICES dataframe without performing any imputation.
+```{r}
+# subset the data frame to include only rows between "2009-01-01" and "2020-12-06"
+SharePrice_sub <- subset(SharePrice, Date >= as.Date("2009-01-01") & Date <= as.Date("2020-12-06"))
+
+# select the numeric columns and divide each row by 1000
+SharePrice_sub[, 2:ncol(SharePrice_sub)] <- SharePrice_sub[, 2:ncol(SharePrice_sub)] * 10000
+
+# replace the modified subsetted data frame back to the original data frame
+SharePrice[SharePrice$Date >= as.Date("2009-01-01") & SharePrice$Date <= as.Date("2020-12-06"), 2:ncol(SharePrice)] <- SharePrice_sub[, 2:ncol(SharePrice_sub)]
+
+# display the last few rows of the modified data frame
+tail(SharePrice)
+```
+
+
+```{r}
+# Set the "Date" column as the index of the data frame
+SharePrice <- SharePrice %>% 
+  column_to_rownames("Date")
+head(SharePrice)
+```
+
+```{r}
+library(tseries)
+
+# scale the numeric columns
+SharePrice <- as.data.frame(diff(scale(SharePrice)))
+
+# test for stationarity using the Augmented Dickey-Fuller (ADF) test
+# for (i in 1:ncol(SharePrice)) {
+#   print(colnames(SharePrice)[i])
+#   print(adf.test(SharePrice[, i]))
+# }
+
+    ```
+For some of the columns, the p-value is smaller than the printed p-value, which means that the time series is likely stationary. For example, the `SCB`, `GGBL`,` HFC`, and `CMLT `columns all have p-values smaller than the printed p-value of 0.05, indicating that these time series are likely stationary. However, other columns, such as `ALW`, `MLC`,`UNIL`, and `PBC`, have p-values greater than 0.05, indicating that these time series are likely non-stationary.
+
+## 2.  Split
+the data into training and testing sets, and use the training set to train the LSTM model with the wavelet-transformed input data. We may need to experiment with different hyperparameters (such as the number of LSTM layers, the number of neurons in each layer, and the learning rate) to optimize the model's performance.
+
+
+```{r}
+library(waveslim)
+library(nnet)
+
+library(wavelets)
+
+# split data into training and test sets c("SWL" , "GCB" , "SCB" , "GGBL" ,"HFC" , "CMLT", "FML")
+train <- SharePrice[1:10000, c("SWL" , "GCB" , "SCB" , "GGBL" ,"HFC" , "CMLT", "FML")]
+test <- SharePrice[10001:10982,c("SWL" , "GCB" , "SCB" , "GGBL" ,"HFC" , "CMLT", "FML") ]
+head(train)
+```
+```{r}
+tail(train)
+```
+
+there are several other time series decomposition methods that can be used for multivariate time series. One popular method is the Singular Spectrum Analysis (SSA) which can be used for both univariate and multivariate time series. Another method is the Multivariate Empirical Mode Decomposition (MEMD) which is an extension of the Empirical Mode Decomposition (EMD) method for multivariate time series. Other methods include Canonical Correlation Analysis (CCA) and Dynamic Factor Analysis (DFA). Each method has its own strengths and weaknesses, so it is important to choose the method that is most appropriate for your specific application.
+```{r}
+library(WaveletComp)
+# Select the column of the training data you want to decompose (assuming it's in column 1)
+ts_data <- ts(train, start = c(1990, 11), frequency = 12)
+# Perform wavelet decomposition using the db4 wavelet
+decomp <- dwt.2d(ts_data,"haar")
+
+# Access the approximation coefficients (A) and detail coefficients (D) at each level
+# names(decomp) <- c("w1", "w2", "w3", "w4", "v4")
+str(ts_data)
+```
+```{r}
+summary(ts_data)
+```
+
+```{r}
+# Extract the wavelet coefficients for each series at each level
+wavelet_coeffs <- list()
+for (i in seq_along(decomp@W)) {
+  wavelet_coeffs[[i]] <- data.frame(sapply(decomp@W[[i]], function(x) x[,1]))
+}
+
+```
+
+
+```{r}
+# LSTM model parameters
+n_steps <- 3
+n_features <- 1
+n_epochs <- 100
+
+# Train and validate LSTM models for each wavelet coefficient series
+models <- list()
+```
+
+
+```{r}
+for (i in 1:ncol(coefficients)) {
+  # Prepare input-output pairs
+  input <- matrix(coefficients[, i][1:(length(coefficients[, i])-n_steps)], ncol=n_steps)
+  output <- coefficients[, i][(n_steps+1):length(coefficients[, i])]
+  
+  # Reshape input to be 3D (samples, time steps, features)
+  input <- array(input, dim=c(dim(input)[1], n_steps, n_features))
+  
+    # Split data into training and validation sets
+  n_train <- round(0.8*length(output))
+  x_train <- input[1:n_train, , ]
+  y_train <- output[1:n_train]
+  x_val <- input[(n_train+1):length(output), , ]
+  y_val <- output[(n_train+1):length(output)]
+  
+  # Define and compile LSTM model
+  model <- keras_model_sequential() %>%
+    layer_lstm(units=50, input_shape=c(n_steps, n_features)) %>%
+    layer_dense(units=1)
+  model %>% compile(loss="mean_squared_error", optimizer="adam")
+  
+  # Train model
+  history <- model %>% fit(x_train, y_train, epochs=n_epochs, batch_size=32,
+                            validation_data=list(x_val, y_val), verbose=0)
+  
+  # Save model to list
+  models[[i]] <- model
+}
+```
+
+```{r}
+library(keras)
+
+# Set up the LSTM model
+model <- keras_model_sequential()
+model %>% 
+  layer_lstm(units = 32, input_shape = c(n_timesteps, n_features)) %>% 
+  layer_dense(units = 1)
+
+# Compile the model
+model %>% compile(
+  loss = "mse",
+  optimizer = optimizer_adam()
+)
+
+# Fit the model to the training data
+model %>% fit(
+  A, # Use the approximation coefficients as input
+  train[, 1], # Use the original stock price data as output
+  epochs = 50,
+  batch_size = 32
+)
+
+```
+
+
+
+
+
+
+
+
+
+```{r}
+
+```
+
+3.  Use the adaptive genetic algorithm to search for the optimal set of hyperparameters for the LSTM model. This may involve defining a fitness function that evaluates the model's performance on a validation set of data, and iteratively refining the model hyperparameters based on the fitness scores.
+
+4.  Use the trained and optimized LSTM model to make predictions on the testing set of data, and evaluate the model's performance using metrics such as mean absolute error (MAE), mean squared error (MSE), and root mean squared error (RMSE).
+
+5.  Repeat steps 1-4 for each stock index you want to forecast, and compare the performance of the hybrid model to other benchmark models (such as a simple moving average or autoregressive integrated moving average model) using the same evaluation metrics.
+
+Keep in mind that the specifics of implementing the hybrid model in R will depend on the specific data and requirements of your task. This is just a general outline to give you an idea of the steps involved.
+
+
+
+
